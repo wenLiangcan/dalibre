@@ -20,6 +20,15 @@ Point the app at a library with `DALIBRE_LIBRARY` (PowerShell:
 `$env:DALIBRE_LIBRARY="C:\path\to\Library"`); otherwise it opens the last one
 used, then the one calibre itself uses.
 
+On macOS, mount network shares in Finder, then choose the library folder
+on the mounted volume (for example, `/Volumes/Shared/Calibre Library`).
+Dalibre uses macOS's system SQLite through purego so Finder volumes use
+their native filesystem locking, including SMB and AFP. No cgo is needed.
+
+Mounted-volume regression checks are opt-in: `DALIBRE_REAL_LIBRARY` reads
+an existing library without changing it; `DALIBRE_TEST_VOLUME` exercises
+writes and competing-writer locks in a new temporary library that it removes.
+
 View tests can save screenshots: `DALIBRE_SHOTS=<folder> go test ./internal/app`.
 
 Build a release (exe + installer in `cmd/dalibre/build`):

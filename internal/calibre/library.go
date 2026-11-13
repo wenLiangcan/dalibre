@@ -12,8 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 //go:embed metadata_sqlite.sql
@@ -36,7 +34,7 @@ func dsn(path string) string {
 	q.Add("_pragma", "busy_timeout(10000)")
 	q.Add("_pragma", "foreign_keys(0)")
 	q.Set("_txlock", "immediate")
-	return "file:" + filepath.ToSlash(path) + "?" + q.Encode()
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), OmitHost: true, RawQuery: q.Encode()}).String()
 }
 
 // Open opens the library in root.
@@ -47,20 +45,25 @@ func Open(root string) (*Library, error) { return open(root, false) }
 func OpenReadOnly(root string) (*Library, error) { return open(root, true) }
 
 func open(root string, readOnly bool) (*Library, error) {
-	registerFunctions()
 	dbPath := filepath.Join(root, "metadata.db")
 	if _, err := os.Stat(dbPath); err != nil {
-		return nil, ErrNotLibrary
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotLibrary
+		}
+		return nil, fmt.Errorf("access library database: %w", err)
 	}
 	d := dsn(dbPath)
 	if readOnly {
 		d += "&mode=ro"
+	} else {
+		// Do not create an empty database if a volume disappears after Stat.
+		d += "&mode=rw"
 	}
-	db, err := sql.Open("sqlite", d)
+	db, err := sql.Open(libraryDriver, d)
 	if err != nil {
 		return nil, err
 	}
-	// One connection: calibre's triggers rely on the functions above, and
+	// One connection: calibre's triggers rely on sqlFuncs, and
 	// a single writer avoids SQLITE_BUSY between our own goroutines.
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
@@ -72,7 +75,6 @@ func open(root string, readOnly bool) (*Library, error) {
 
 // Create makes an empty library in root, which must not hold one already.
 func Create(root string) (*Library, error) {
-	registerFunctions()
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
@@ -80,7 +82,7 @@ func Create(root string) (*Library, error) {
 	if _, err := os.Stat(dbPath); err == nil {
 		return nil, fmt.Errorf("%s already exists", dbPath)
 	}
-	db, err := sql.Open("sqlite", dsn(dbPath))
+	db, err := sql.Open(libraryDriver, dsn(dbPath))
 	if err != nil {
 		return nil, err
 	}

@@ -6,40 +6,32 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
-
-	"modernc.org/sqlite"
 )
 
-// calibre registers these functions on its connection; its triggers and
-// views call them, so a write to books or series fails without them.
-var registerOnce sync.Once
+// sqlFunc is one of the functions calibre registers on its connection; its
+// triggers and views call them, so a write to books or series fails
+// without them. Each driver registers this one table.
+type sqlFunc struct {
+	name          string
+	nargs         int32
+	deterministic bool
+	scalar        func(args []driver.Value) driver.Value // nil for aggregates
+	aggregate     func() *concatAgg
+}
 
-func registerFunctions() {
-	registerOnce.Do(func() {
-		sqlite.MustRegisterDeterministicScalarFunction("title_sort", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-			return TitleSort(asString(args[0])), nil
-		})
-		sqlite.MustRegisterScalarFunction("uuid4", 0, func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error) {
-			return newUUID(), nil
-		})
-		// books_list_filter is calibre's in-memory search restriction; outside
-		// calibre every book passes.
-		sqlite.MustRegisterScalarFunction("books_list_filter", 1, func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error) {
-			return int64(1), nil
-		})
-		agg := func(name string, nargs int32, mk func() *concatAgg) {
-			sqlite.MustRegisterFunction(name, &sqlite.FunctionImpl{
-				NArgs:         nargs,
-				MakeAggregate: func(sqlite.FunctionContext) (sqlite.AggregateFunction, error) { return mk(), nil },
-			})
-		}
-		agg("concat", 1, func() *concatAgg { return &concatAgg{sep: ","} })
-		agg("sortconcat", 2, func() *concatAgg { return &concatAgg{sep: ",", sorted: true} })
-		agg("sortconcat_bar", 2, func() *concatAgg { return &concatAgg{sep: "|", sorted: true} })
-		agg("sortconcat_amper", 2, func() *concatAgg { return &concatAgg{sep: "&", sorted: true} })
-		agg("identifiers_concat", 2, func() *concatAgg { return &concatAgg{sep: ",", pair: true} })
-	})
+var sqlFuncs = []sqlFunc{
+	{name: "title_sort", nargs: 1, deterministic: true, scalar: func(args []driver.Value) driver.Value {
+		return TitleSort(asString(args[0]))
+	}},
+	{name: "uuid4", scalar: func([]driver.Value) driver.Value { return newUUID() }},
+	// books_list_filter is calibre's in-memory search restriction; outside
+	// calibre every book passes.
+	{name: "books_list_filter", nargs: 1, scalar: func([]driver.Value) driver.Value { return int64(1) }},
+	{name: "concat", nargs: 1, aggregate: func() *concatAgg { return &concatAgg{sep: ","} }},
+	{name: "sortconcat", nargs: 2, aggregate: func() *concatAgg { return &concatAgg{sep: ",", sorted: true} }},
+	{name: "sortconcat_bar", nargs: 2, aggregate: func() *concatAgg { return &concatAgg{sep: "|", sorted: true} }},
+	{name: "sortconcat_amper", nargs: 2, aggregate: func() *concatAgg { return &concatAgg{sep: "&", sorted: true} }},
+	{name: "identifiers_concat", nargs: 2, aggregate: func() *concatAgg { return &concatAgg{sep: ",", pair: true} }},
 }
 
 func asString(v driver.Value) string {
@@ -76,7 +68,7 @@ type concatAgg struct {
 	items  []concatItem
 }
 
-func (a *concatAgg) Step(_ *sqlite.FunctionContext, args []driver.Value) error {
+func (a *concatAgg) add(args []driver.Value) {
 	switch {
 	case a.pair:
 		a.items = append(a.items, concatItem{val: asString(args[0]) + ":" + asString(args[1])})
@@ -86,14 +78,12 @@ func (a *concatAgg) Step(_ *sqlite.FunctionContext, args []driver.Value) error {
 	default:
 		a.items = append(a.items, concatItem{val: asString(args[0])})
 	}
-	return nil
 }
 
-func (a *concatAgg) WindowInverse(*sqlite.FunctionContext, []driver.Value) error { return nil }
-
-func (a *concatAgg) WindowValue(*sqlite.FunctionContext) (driver.Value, error) {
+// value is the joined result, or nil when no rows were added.
+func (a *concatAgg) value() driver.Value {
 	if len(a.items) == 0 {
-		return nil, nil
+		return nil
 	}
 	if a.sorted {
 		sort.SliceStable(a.items, func(i, j int) bool { return a.items[i].key < a.items[j].key })
@@ -102,7 +92,5 @@ func (a *concatAgg) WindowValue(*sqlite.FunctionContext) (driver.Value, error) {
 	for i, it := range a.items {
 		parts[i] = it.val
 	}
-	return strings.Join(parts, a.sep), nil
+	return strings.Join(parts, a.sep)
 }
-
-func (a *concatAgg) Final(*sqlite.FunctionContext) {}
