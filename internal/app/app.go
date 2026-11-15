@@ -74,6 +74,8 @@ type App struct {
 	tableSort  ui.SortOrder
 	sectionsOn map[string]bool
 
+	libraryMenuOpen bool
+
 	details    map[int64]*calibre.Details
 	detailsReq map[int64]bool
 	covers     *coverCache

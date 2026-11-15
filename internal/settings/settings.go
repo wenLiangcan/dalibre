@@ -226,9 +226,6 @@ func (s *Settings) Plugin(id string) *PluginState {
 	return s.Plugins[id]
 }
 
-// MaxRecent is how many libraries Recent keeps.
-const MaxRecent = 6
-
 // DefaultPath is settings.json in the user's configuration folder.
 func DefaultPath() string {
 	dir, err := os.UserConfigDir()
@@ -274,7 +271,4 @@ func (s *Settings) Save() error {
 func (s *Settings) Opened(root string) {
 	s.Library = root
 	s.Recent = append([]string{root}, slices.DeleteFunc(s.Recent, func(r string) bool { return r == root })...)
-	if len(s.Recent) > MaxRecent {
-		s.Recent = s.Recent[:MaxRecent]
-	}
 }

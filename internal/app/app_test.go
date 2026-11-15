@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"dalibre/cmd/dalibre/locales"
 	"dalibre/internal/app/theme"
 	"dalibre/internal/calibre"
 	"dalibre/internal/catalog"
@@ -376,6 +377,74 @@ func TestLibrarySwitcherMenu(t *testing.T) {
 	shot(t, tt, "switcher")
 	if _, ok := tt.Find(revealLabel() + ": " + filepath.Base(other)); !ok {
 		t.Error("no reveal button")
+	}
+}
+
+func TestLibrarySwitcherScrollsLongHistory(t *testing.T) {
+	var bottom float32
+	for _, count := range []int{12, 40} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			a := newTestApp(t)
+			oldest := filepath.Join(t.TempDir(), "Oldest library")
+			lib, err := calibre.Create(oldest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lib.Close()
+			for i := 1; i < count-1; i++ {
+				a.settings.Opened(filepath.Join(t.TempDir(), "Library "+strconv.Itoa(i)))
+			}
+			a.settings.Recent = append(a.settings.Recent, oldest)
+			tt := ui.NewTester(a.View, 1440, 900)
+			tt.Frame()
+			if err := tt.Click(locales.CommonLibrary()); err != nil {
+				t.Fatal(err)
+			}
+			tt.Frame()
+			first, ok := tt.Find(a.settings.Recent[0])
+			if !ok {
+				t.Fatal("no first library in the menu")
+			}
+			if err := tt.Click(oldest); err == nil {
+				t.Fatal("the oldest library should start outside the scroll viewport")
+			}
+			tt.Scroll(first.X+10, first.Y+first.H/2, 0, 10000)
+			tt.Frame()
+			last, ok := tt.Find(locales.MainNewLibraryMenu())
+			if !ok {
+				t.Fatal("no create-library action after scrolling")
+			}
+			edge := last.Y + last.H
+			if edge-first.Y > 360 {
+				t.Fatalf("menu exceeds its compact height: first row %v, bottom %v", first.Y, edge)
+			}
+			if bottom == 0 {
+				bottom = edge
+			} else if edge != bottom {
+				t.Fatalf("menu grew with the history: bottom %v, previously %v", edge, bottom)
+			}
+			shot(t, tt, "switcher-scrolled")
+			if count == 40 {
+				// Keyboard navigation must reveal items outside the viewport too.
+				tt.Key(0, ui.KeyEscape)
+				if a.libraryMenuOpen {
+					t.Fatal("Escape left the menu open")
+				}
+				if err := tt.Click(locales.CommonLibrary()); err != nil {
+					t.Fatal(err)
+				}
+				tt.Key(0, ui.KeyEnd)
+				tt.Key(0, ui.KeyUp)
+				tt.Key(0, ui.KeyUp)
+				tt.Key(0, ui.KeyEnter)
+			} else if err := tt.Click(oldest); err != nil {
+				t.Fatalf("oldest library is not reachable by scrolling: %v", err)
+			}
+			tt.Frame()
+			if a.lib.Root != oldest || a.libraryMenuOpen || a.settings.Recent[0] != oldest || len(a.settings.Recent) != count {
+				t.Fatalf("switching to the oldest library failed: root %q, menu open %v, history %v", a.lib.Root, a.libraryMenuOpen, a.settings.Recent)
+			}
+		})
 	}
 }
 

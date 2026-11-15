@@ -2,6 +2,7 @@ package settings
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2 := Load(p)
-	if s2.Library != "b" || len(s2.Recent) != MaxRecent || s2.Recent[0] != "b" || s2.Recent[1] != "g" || !s2.ListView {
+	if s2.Library != "b" || !slices.Equal(s2.Recent, []string{"b", "g", "f", "e", "d", "c", "a"}) || !s2.ListView {
 		t.Errorf("loaded %+v", s2)
 	}
 }

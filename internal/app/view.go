@@ -266,13 +266,17 @@ func (a *App) librarySwitcher(c *ui.Context) {
 		name = filepath.Base(a.lib.Root)
 		sub = locales.CommonBookCount(a.counts.All)
 	}
-	b := ui.ButtonBase(c).Padding(theme.Space8).Gap(theme.Space10).AlignItems(ui.Center).Radius(theme.RadiusMD).
+	m := ui.MenuBase(c, &a.libraryMenuOpen)
+	b := m.Trigger.Padding(theme.Space8).Gap(theme.Space10).AlignItems(ui.Center).Radius(theme.RadiusMD).
 		Background(pal().SurfaceRaised).Border(1, pal().BorderSubtle).Shadow(0, 1, 2, 0, ui.RGBA(26, 23, 18, 0.05)).Label(locales.CommonLibrary())
 	if b.Hovered() {
 		b.Border(1, pal().Border)
 	}
-	b.PopoverMenuButton(func(m *ui.Menu) {
-		m.MaxWidth(340)
+	m.Popup(func(panel ui.Element) {
+		t := c.Theme()
+		// Keep the switcher compact regardless of how many libraries were opened.
+		panel.MinWidth(180).MaxWidth(340).MaxHeight(360).Padding(theme.Space4).Radius(theme.RadiusSM+2).
+			Background(t.Background).Border(1, t.Border).Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18)).Margin(theme.Space4, 0)
 		// Every recently opened library, the open one checked.
 		recent := a.settings.Recent
 		if a.lib != nil && !slices.Contains(recent, a.lib.Root) {
@@ -280,20 +284,28 @@ func (a *App) librarySwitcher(c *ui.Context) {
 		}
 		for _, r := range recent {
 			open := a.lib != nil && r == a.lib.Root
-			item := m.Item(filepath.Base(r)).ID(r).Subtitle(r).Checked(open).Content(func(x ui.MenuItemContent) {
-				a.recentLibraryRow(x, r)
+			item := m.CheckItem(open).Label(filepath.Base(r)).Description(r)
+			text, muted := libraryMenuRow(item, t)
+			item.Children(func() {
+				mark := ui.Box(c).Size(16, 16).Shrink(0).Center()
+				if open {
+					mark.Children(func() { ui.Icon(c, icons.Check).FontSize(14).TextColor(text) })
+				}
+				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+					a.recentLibraryRow(ui.MenuItemContent{Context: c, Highlighted: item.Highlighted(), Text: text, Muted: muted}, r)
+				})
 			})
-			if item.Chosen() && !open {
+			if item.Clicked() && !open {
 				a.openLibrary(r)
 			}
 		}
 		if len(recent) > 0 {
-			m.Separator()
+			ui.Box(c).Height(1).Margin(theme.Space4, theme.Space8).Background(t.Border).Shrink(0)
 		}
-		if m.Item(locales.MainOpenLibraryMenu()).Chosen() {
+		if libraryMenuAction(c, m, t, locales.MainOpenLibraryMenu(), len(recent) > 0) {
 			a.chooseLibrary()
 		}
-		if m.Item(locales.MainNewLibraryMenu()).Chosen() {
+		if libraryMenuAction(c, m, t, locales.MainNewLibraryMenu(), len(recent) > 0) {
 			a.openCreateSheet()
 		}
 	})
@@ -307,6 +319,29 @@ func (a *App) librarySwitcher(c *ui.Context) {
 		})
 		ui.Icon(c, icons.ChevronDown).FontSize(14).TextColor(pal().IconMuted)
 	})
+}
+
+// libraryMenuRow keeps custom switcher rows styled like the toolkit's menus.
+func libraryMenuRow(row ui.Element, t *ui.Theme) (text, muted ui.Color) {
+	row.AlignItems(ui.Center).Gap(theme.Space8).Padding(theme.Space6, theme.Space8).Radius(theme.RadiusSM).Shrink(0)
+	text, muted = t.Text, t.TextMuted
+	if row.Highlighted() {
+		text, muted = t.AccentText, t.AccentText
+		row.Background(t.Accent).TextColor(text)
+	}
+	return
+}
+
+func libraryMenuAction(c *ui.Context, m ui.MenuParts, t *ui.Theme, label string, marks bool) bool {
+	row := m.Item().Label(label)
+	text, _ := libraryMenuRow(row, t)
+	row.Children(func() {
+		if marks {
+			ui.Box(c).Size(16, 16).Shrink(0)
+		}
+		ui.Text(c, label).SingleLine().TextColor(text)
+	})
+	return row.Clicked()
 }
 
 // revealLabel names showing a file in the system's file manager.
